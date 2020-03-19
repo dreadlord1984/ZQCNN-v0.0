@@ -1,15 +1,29 @@
+#if defined(_WIN32)
 #include "ZQ_FaceRecognizerArcFaceMiniCaffe.h"
-#include <cblas.h>
+#include "ZQ_CNN_CompileConfig.h"
+#if ZQ_CNN_USE_BLAS_GEMM
+#include <openblas\cblas.h>
+#pragma comment(lib,"libopenblas.lib")
+#elif ZQ_CNN_USE_MKL_GEMM
+#include <mkl\mkl.h>
+#pragma comment(lib,"mklml.lib")
+#else
+#pragma comment(lib,"ZQ_GEMM.lib")
+#endif
 using namespace ZQ;
 using namespace cv;
 using namespace std;
 
 int main()
 {
+#if ZQ_CNN_USE_BLAS_GEMM
 	openblas_set_num_threads(1);
+#elif ZQ_CNN_USE_MKL_GEMM
+	mkl_set_num_threads(1);
+#endif
 	ZQ_FaceRecognizer* recognizer[1] = { 0 };
-	std::string prototxt_file = "model/model-r50-am.prototxt";
-	std::string caffemodel_file = "model/model-r50-am.caffemodel";
+	std::string prototxt_file = "model/mobilefacenet-res2-6-10-2-dim512-minicaffe.prototxt";
+	std::string caffemodel_file = "model/mobilefacenet-res2-6-10-2-dim512.caffemodel";
 	std::string out_blob_name = "fc1";
 	bool fail_flag = false;
 	recognizer[0] = new ZQ_FaceRecognizerArcFaceMiniCaffe();
@@ -25,8 +39,8 @@ int main()
 		return EXIT_FAILURE;
 	}
 
-	Mat img0 = imread("data\\00_.jpg");
-	Mat img1 = imread("data\\01_.jpg");
+	Mat img0 = imread("data/00_.jpg");
+	Mat img1 = imread("data/01_.jpg");
 	double t1 = omp_get_wtime();
 	int iters = 1;
 	for (int it = 0; it < iters; it++)
@@ -45,3 +59,12 @@ int main()
 
 	return EXIT_SUCCESS;
 }
+
+#else
+#include <stdio.h>
+int main(int argc, const char** argv)
+{
+	printf("%s only support windows\n", argv[0]);
+	return 0;
+}
+#endif

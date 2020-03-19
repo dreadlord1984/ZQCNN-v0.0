@@ -1,23 +1,31 @@
 #include "ZQ_CNN_MouthDetector.h"
-#include <cblas.h>
+#include "ZQ_CNN_CompileConfig.h"
+#if ZQ_CNN_USE_BLAS_GEMM
+#include <openblas/cblas.h>
+#pragma comment(lib,"libopenblas.lib")
+#elif ZQ_CNN_USE_MKL_GEMM
+#include <mkl/mkl.h>
+#pragma comment(lib,"mklml.lib")
+#else
+#pragma comment(lib,"ZQ_GEMM.lib")
+#endif
 
 using namespace cv;
 using namespace std;
 using namespace ZQ;
 
-int SampleDetectMouth_cam(int argc, const char** argv);
 int SampleDetectMouth_fig(int argc, const char** argv);
 
 int main(int argc, const char** argv)
 {
+#if ZQ_CNN_USE_BLAS_GEMM
 	openblas_set_num_threads(1);
+#elif ZQ_CNN_USE_MKL_GEMM
+	mkl_set_num_threads(1);
+#endif
 	if (argc >= 2)
 	{
-		if (_strcmpi(argv[1], "cam") == 0)
-		{
-			return SampleDetectMouth_cam(argc,argv);
-		}
-		else if (_strcmpi(argv[1], "fig") == 0)
+		if (strcmp(argv[1], "fig") == 0)
 		{
 			return SampleDetectMouth_fig(argc,argv);
 		}
@@ -29,81 +37,6 @@ int main(int argc, const char** argv)
 	return EXIT_FAILURE;
 }
 
-int SampleDetectMouth_cam(int argc, const char** argv)
-{
-	ZQ_CNN_MouthDetector detector;
-	ZQ_CNN_MouthDetector::InitialArgs init_args;
-	ZQ_CNN_MouthDetector::DetectArgs detect_args;
-	ZQ_CNN_MouthDetector::DetectedResult detected_result;
-	ZQ_CNN_MouthDetector::SimpleDetectedResult simple_detected_result;
-
-
-	detect_args.enable_rot = true;
-	detect_args.mtcnn_min_size = 60;
-	detect_args.ssd_mouth_thresh = 0.3;
-	if (!detector.Initialize(&init_args))
-	{
-		cout << "init failed\n";
-		return EXIT_FAILURE;
-	}
-
-	Mat image;
-	VideoCapture cap(0);
-
-	if (!cap.isOpened())
-	{
-		cout << "fail to open camera!" << endl;
-		return EXIT_FAILURE;
-	}
-
-	//cap.set(CV_CAP_PROP_FRAME_WIDTH, 640);
-	//cap.set(CV_CAP_PROP_FRAME_HEIGHT, 480);
-	cap >> image;
-
-	if (image.empty()) 
-	{
-		cout << "failed to load video" << endl;
-		return EXIT_FAILURE;
-	}
-
-	double t0 = omp_get_wtime();
-
-	int stop = 1200;
-	int fr_id = 0;
-	while (fr_id++ < stop) {
-		cap >> image;
-
-		if (image.empty())
-		{
-			cout << "empty image\n";
-			break;
-		}
-		//cv::resize(image, image, Size(1920, 1080));
-		double t1 = omp_get_wtime();
-		printf("fr_id:[%05d], timecode: %.3f\n", fr_id, t1 - t0);
-		/*if (detector.Detect(image.ptr<unsigned char>(0), image.cols, image.rows, image.step[0], &detect_args, &detected_result))
-		{
-			cout << "!!\n";
-			double t2 = omp_get_wtime();
-			detector.DrawResult(image.ptr<unsigned char>(0), image.cols, image.rows, image.step[0], &detected_result);
-			double t3 = omp_get_wtime();
-			printf("detect : %.3f s, draw: %.3f s\n", (t2 - t1), (t3 - t2));
-
-		}*/
-		if (detector.DetectSimpleResult(image.ptr<unsigned char>(0), image.cols, image.rows, image.step[0], &detect_args, &simple_detected_result))
-		{
-			double t2 = omp_get_wtime();
-			detector.DrawSimpleResult(image.ptr<unsigned char>(0), image.cols, image.rows, image.step[0], &simple_detected_result);
-			double t3 = omp_get_wtime();
-			printf("detect : %.3f ms, draw: %.3f ms\n", 1000 * (t2 - t1), 1000 * (t3 - t2));
-		}
-		imshow("result", image);
-		if (waitKey(1) >= 0) break;
-	}
-	image.release();
-	return EXIT_SUCCESS;
-
-}
 
 int SampleDetectMouth_fig(int argc, const char** argv)
 {
@@ -111,7 +44,7 @@ int SampleDetectMouth_fig(int argc, const char** argv)
 	float ssd_mouth_thresh = 0.5;
 	if (argc < 5)
 	{
-		printf("%s %s model_root image_file out_file [min_size] [thresh] [draw_image_file]\n", min_size, ssd_mouth_thresh);
+		printf("%s %s model_root image_file out_file [min_size] [thresh] [draw_image_file]\n", argv[0],argv[1]);
 		return EXIT_FAILURE;
 	}
 	std::string model_root = argv[2];
@@ -122,7 +55,7 @@ int SampleDetectMouth_fig(int argc, const char** argv)
 	if (argc > 5)
 		min_size = __max(12, atoi(argv[5]));
 	if (argc > 6)
-		ssd_mouth_thresh = __max(0.15, atoi(argv[6]));
+		ssd_mouth_thresh = __max(0.01, atof(argv[6]));
 	if (argc > 7)
 	{
 		should_save_draw = true;
@@ -131,26 +64,26 @@ int SampleDetectMouth_fig(int argc, const char** argv)
 
 	ZQ_CNN_MouthDetector detector;
 	ZQ_CNN_MouthDetector::InitialArgs init_args;
-	init_args.mtcnn_pnet_proto = model_root + "\\det1.zqparams";
-	init_args.mtcnn_pnet_model = model_root + "\\det1.nchwbin";
-	init_args.mtcnn_rnet_proto = model_root + "\\det2.zqparams";
-	init_args.mtcnn_rnet_model = model_root + "\\det2.nchwbin";
-	init_args.mtcnn_onet_proto = model_root + "\\det3.zqparams";
-	init_args.mtcnn_onet_model = model_root + "\\det3.nchwbin";
-	init_args.ssd_proto = model_root + "\\MobileNetSSD_deploy-face.zqparams";
-	init_args.ssd_model = model_root + "\\MobileNetSSD_deploy-face.nchwbin";
-	init_args.ssd_class_names_file = model_root + "\\MobileNetSSD_deploy-face.names";
+	init_args.mtcnn_pnet_proto = model_root + "/det1.zqparams";
+	init_args.mtcnn_pnet_model = model_root + "/det1_bgr.nchwbin";
+	init_args.mtcnn_rnet_proto = model_root + "/det2.zqparams";
+	init_args.mtcnn_rnet_model = model_root + "/det2_bgr.nchwbin";
+	init_args.mtcnn_onet_proto = model_root + "/det3.zqparams";
+	init_args.mtcnn_onet_model = model_root + "/det3_bgr.nchwbin";
+	init_args.ssd_proto = model_root + "/MobileNetSSD_deploy-face.zqparams";
+	init_args.ssd_model = model_root + "/MobileNetSSD_deploy-face.nchwbin";
+	init_args.ssd_class_names_file = model_root + "/MobileNetSSD_deploy-face.names";
 	ZQ_CNN_MouthDetector::DetectArgs detect_args;
 	ZQ_CNN_MouthDetector::DetectedResult detected_result;
 	ZQ_CNN_MouthDetector::SimpleDetectedResult simple_detected_result;
 
 	
 	detect_args.enable_rot = true;
-	detect_args.mtcnn_min_size = 60;
+	detect_args.mtcnn_min_size = min_size;
 	detect_args.mtcnn_thresh_p = 0.8;
 	detect_args.mtcnn_thresh_r = 0.7;
 	detect_args.mtcnn_thresh_o = 0.7;
-	detect_args.ssd_mouth_thresh = 0.5;
+	detect_args.ssd_mouth_thresh = ssd_mouth_thresh;
 
 	//detect_args.enlarge_border = 1;
 	if (!detector.Initialize(&init_args))
@@ -195,7 +128,11 @@ int SampleDetectMouth_fig(int argc, const char** argv)
 		{
 			//printf("failed to detect\n");
 			FILE* out = 0;
+#if defined(_WIN32)
 			if (0 != fopen_s(&out, out_file.c_str(), "w"))
+#else
+			if (0 == (out = fopen(out_file.c_str(), "w")))
+#endif
 			{
 				printf("failed to create file %s\n", out_file.c_str());
 				return EXIT_FAILURE;
@@ -204,7 +141,6 @@ int SampleDetectMouth_fig(int argc, const char** argv)
 			fclose(out);
 			return EXIT_SUCCESS;
 		}
-
 		if (should_save_draw)
 		{
 			detector.DrawSimpleResult(image.ptr<unsigned char>(0), image.cols, image.rows, image.step[0], &simple_detected_result);
@@ -216,7 +152,11 @@ int SampleDetectMouth_fig(int argc, const char** argv)
 		}
 		
 		FILE* out = 0;
+#if defined(_WIN32)
 		if (0 != fopen_s(&out, out_file.c_str(), "w"))
+#else
+		if (0 == (out = fopen(out_file.c_str(), "w")))
+#endif
 		{
 			printf("failed to create file %s\n", out_file.c_str());
 			return EXIT_FAILURE;

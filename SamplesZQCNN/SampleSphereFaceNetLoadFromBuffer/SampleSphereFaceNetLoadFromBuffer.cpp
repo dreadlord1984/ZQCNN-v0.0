@@ -1,8 +1,18 @@
 #include "ZQ_CNN_Net.h"
-#include <cblas.h>
 #include <vector>
 #include <iostream>
-#include "opencv2\opencv.hpp"
+#include "opencv2/opencv.hpp"
+#include "ZQ_CNN_CompileConfig.h"
+#if ZQ_CNN_USE_BLAS_GEMM
+#include <openblas/cblas.h>
+#pragma comment(lib,"libopenblas.lib")
+#elif ZQ_CNN_USE_MKL_GEMM
+#include <mkl/mkl.h>
+#pragma comment(lib,"mklml.lib")
+#else
+#pragma comment(lib,"ZQ_GEMM.lib")
+#endif
+
 using namespace ZQ;
 using namespace std;
 using namespace cv;
@@ -14,15 +24,27 @@ bool load_to_buffer(const std::string& param_file, const std::string& model_file
 	model_buffer.clear();
 
 	FILE* in = 0;
+#if defined(_WIN32)
 	if (0 != fopen_s(&in, param_file.c_str(), "rb"))
+#else
+	if(0 == (in = fopen(param_file.c_str(), "rb")))
+#endif
 	{
 		cout << "failed to open " << param_file << "\n";
 		return false;
 	}
+#if defined(_WIN32)
 	_fseeki64(in, 0, SEEK_END);
 	__int64 param_buffer_len = _ftelli64(in);
 	param_buffer.resize(param_buffer_len);
 	_fseeki64(in, 0, SEEK_SET);
+#else
+	fseek(in, 0, SEEK_END);
+	__int64 param_buffer_len = ftell(in);
+	param_buffer.resize(param_buffer_len);
+	fseek(in, 0, SEEK_SET);
+#endif
+
 	if (param_buffer_len > 0)
 	{
 		fread_s(&param_buffer[0], param_buffer_len, 1, param_buffer_len, in);
@@ -33,6 +55,7 @@ bool load_to_buffer(const std::string& param_file, const std::string& model_file
 		return false;
 	}
 	fclose(in);
+#if defined(_WIN32)
 	if (0 != fopen_s(&in, model_file.c_str(), "rb"))
 	{
 		cout << "failed to open " << model_file << "\n";
@@ -51,6 +74,26 @@ bool load_to_buffer(const std::string& param_file, const std::string& model_file
 		cout << "empty file " << model_file << "\n";
 		return false;
 	}
+#else
+	if (0 == (in = fopen(model_file.c_str(), "rb")))
+	{
+		cout << "failed to open " << model_file << "\n";
+		return false;
+	}
+	fseek(in, 0, SEEK_END);
+	__int64 model_buffer_len = ftell(in);
+	model_buffer.resize(model_buffer_len);
+	fseek(in, 0, SEEK_SET);
+	if (model_buffer_len > 0)
+	{
+		fread(&model_buffer[0], 1, model_buffer_len, in);
+	}
+	else
+	{
+		cout << "empty file " << model_file << "\n";
+		return false;
+	}
+#endif
 	fclose(in);
 
 	return true;
@@ -59,11 +102,16 @@ bool load_to_buffer(const std::string& param_file, const std::string& model_file
 int main()
 {
 	int num_threads = 1;
+
+#if ZQ_CNN_USE_BLAS_GEMM
 	openblas_set_num_threads(num_threads);
+#elif ZQ_CNN_USE_MKL_GEMM
+	mkl_set_num_threads(num_threads);
+#endif
 
 	std::string out_blob_name = "fc5";
-	std::string param_file = "model\\mobilefacenet-res2-6-10-2-dim256.zqparams";
-	std::string model_file = "model\\mobilefacenet-res2-6-10-2-dim256-emore.nchwbin";
+	std::string param_file = "model/mobilefacenet-res8-16-32-8-dim512.zqparams";
+	std::string model_file = "model/mobilefacenet-res8-16-32-8-dim512.nchwbin";
 	
 	std::vector<char> param_buffer, model_buffer;
 	if (!load_to_buffer(param_file, model_file, param_buffer, model_buffer))
@@ -76,7 +124,7 @@ int main()
 	const char* model_ptr = &model_buffer[0];
 	__int64 param_buffer_len = param_buffer.size();
 	__int64 model_buffer_len = model_buffer.size();
-
+	
 	ZQ_CNN_Net net;
 	if (!net.LoadFromBuffer(param_ptr,param_buffer_len, model_ptr, model_buffer_len, false))
 	{
@@ -97,14 +145,14 @@ int main()
 	Mat image0, image1;
 	if (input_C == 3 && input_H == 112 && input_W == 112)
 	{
-		std::string name = "data\\00_.jpg";
+		std::string name = "data/00_.jpg";
 		image0 = cv::imread(name, 1);
 		if (image0.empty())
 		{
 			cout << name << " does not exist!\n";
 			return EXIT_FAILURE;
 		}
-		name = "data\\01_.jpg";
+		name = "data/01_.jpg";
 		image1 = cv::imread(name, 1);
 		if (image1.empty())
 		{
@@ -114,14 +162,14 @@ int main()
 	}
 	else if (input_C == 3 && input_H == 112 && input_W == 96)
 	{
-		std::string name = "data\\00.jpg";
+		std::string name = "data/00.jpg";
 		image0 = cv::imread(name, 1);
 		if (image0.empty())
 		{
 			cout << name << " does not exist!\n";
 			return EXIT_FAILURE;
 		}
-		name = "data\\01.jpg";
+		name = "data/01.jpg";
 		image1 = cv::imread(name, 1);
 		if (image1.empty())
 		{
@@ -148,7 +196,7 @@ int main()
 		for (int it = 0; it < iters; it++)
 		{
 			double t3 = omp_get_wtime();
-			if (!net.Forward(input0, 1))
+			if (!net.Forward(input0))
 			{
 				cout << "failed to run\n";
 				return EXIT_FAILURE;
@@ -168,7 +216,7 @@ int main()
 		double t3 = omp_get_wtime();
 		for (int it = 0; it < iters; it++)
 		{
-			if (!net.Forward(input1, 1))
+			if (!net.Forward(input1))
 			{
 				cout << "failed to run\n";
 				return EXIT_FAILURE;
